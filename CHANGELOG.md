@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- `pdf_extract_images` and `pdf_read_pages` now save images as PNG files to `~/.cache/pdf-mcp/images/` and return file paths instead of inline base64 data
+- Image cache entries store file paths in SQLite instead of base64 blobs, significantly reducing database size
+- Cache `get_stats()` reports combined SQLite + image directory size
+
+### Fixed
+- Image files are now properly cleaned up on cache clear, expiration, and invalidation
+- Expired cache entries are automatically pruned on server startup
+
 ## [1.3.0] - 2026-03-08
 ### Fixed
 - PDF validation bypass: `.pdf` URL extension no longer skips magic-bytes (`%PDF`) verification when Content-Type is non-PDF

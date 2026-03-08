@@ -4,6 +4,7 @@ SQLite-based cache for PDF data persistence across MCP server restarts.
 
 import json
 import os
+import shutil
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,13 +19,20 @@ class PDFCache:
     Uses file modification time for cache invalidation.
     """
 
-    def __init__(self, cache_dir: Path | None = None, ttl_hours: int = 24):
+    def __init__(
+        self,
+        cache_dir: Path | None = None,
+        ttl_hours: int = 24,
+        images_dir: Path | None = None,
+    ):
         """
         Initialize the cache.
 
         Args:
             cache_dir: Directory to store cache database. Defaults to ~/.cache/pdf-mcp
             ttl_hours: Time-to-live for cache entries in hours
+            images_dir: Directory to store extracted images.
+                Defaults to cache_dir/images
         """
         if cache_dir is None:
             cache_dir = Path.home() / ".cache" / "pdf-mcp"
@@ -33,11 +41,20 @@ class PDFCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.cache_dir / "cache.db"
         self.ttl_hours = ttl_hours
+        self.images_dir = images_dir or (self.cache_dir / "images")
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(self.images_dir), 0o700)
         self._init_db()
 
     def _init_db(self) -> None:
         """Initialize database schema."""
         with sqlite3.connect(self.db_path) as conn:
+            # Check if page_images needs migration (old schema has 'data' column)
+            cursor = conn.execute("PRAGMA table_info(page_images)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "data" in columns or (columns and "file_path_on_disk" not in columns):
+                conn.execute("DROP TABLE IF EXISTS page_images")
+
             conn.executescript(
                 """
                 -- PDF metadata cache
@@ -63,7 +80,7 @@ class PDFCache:
                     PRIMARY KEY (file_path, page_num)
                 );
 
-                -- Page images cache (stores base64)
+                -- Page images cache (stores file paths)
                 CREATE TABLE IF NOT EXISTS page_images (
                     file_path TEXT NOT NULL,
                     page_num INTEGER NOT NULL,
@@ -72,7 +89,8 @@ class PDFCache:
                     width INTEGER NOT NULL,
                     height INTEGER NOT NULL,
                     format TEXT NOT NULL,
-                    data TEXT NOT NULL,
+                    file_path_on_disk TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (file_path, page_num, image_index)
                 );
@@ -86,6 +104,8 @@ class PDFCache:
                     ON pdf_metadata(accessed_at);
             """
             )
+
+        self.clear_expired()
 
     def _get_file_info(self, path: str) -> tuple[float, int]:
         """Get file modification time and size."""
@@ -289,7 +309,7 @@ class PDFCache:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT image_index, width, height,
-                   format, data, file_mtime
+                   format, file_path_on_disk, size_bytes, file_mtime
                    FROM page_images
                    WHERE file_path = ? AND page_num = ?
                    ORDER BY image_index""",
@@ -303,6 +323,11 @@ class PDFCache:
             if not all(self._is_cache_valid(path, row["file_mtime"]) for row in rows):
                 return None
 
+            # Verify all files exist on disk
+            for row in rows:
+                if not Path(row["file_path_on_disk"]).exists():
+                    return None
+
             return [
                 {
                     "page": page_num + 1,
@@ -310,7 +335,8 @@ class PDFCache:
                     "width": row["width"],
                     "height": row["height"],
                     "format": row["format"],
-                    "data": row["data"],
+                    "path": row["file_path_on_disk"],
+                    "size_bytes": row["size_bytes"],
                 }
                 for row in rows
             ]
@@ -324,12 +350,29 @@ class PDFCache:
         Args:
             path: Path to PDF file
             page_num: Page number (0-indexed)
-            images: List of image dicts with width, height, format, data
+            images: List of image dicts with width, height, format, path, size_bytes
         """
         mtime, _ = self._get_file_info(path)
 
         with sqlite3.connect(self.db_path) as conn:
-            # Clear existing images for this page
+            # Query existing file paths for orphan cleanup
+            old_rows = conn.execute(
+                "SELECT file_path_on_disk FROM page_images"
+                " WHERE file_path = ? AND page_num = ?",
+                (path, page_num),
+            ).fetchall()
+            old_paths = {row[0] for row in old_rows}
+            new_paths = {img["path"] for img in images}
+            orphans = old_paths - new_paths
+
+            # Delete orphan files from disk
+            for orphan_path in orphans:
+                try:
+                    Path(orphan_path).unlink()
+                except FileNotFoundError:
+                    pass
+
+            # Clear existing DB rows for this page
             conn.execute(
                 "DELETE FROM page_images WHERE file_path = ? AND page_num = ?",
                 (path, page_num),
@@ -339,8 +382,9 @@ class PDFCache:
             conn.executemany(
                 """INSERT INTO page_images
                    (file_path, page_num, image_index,
-                    file_mtime, width, height, format, data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    file_mtime, width, height, format,
+                    file_path_on_disk, size_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         path,
@@ -350,7 +394,8 @@ class PDFCache:
                         img["width"],
                         img["height"],
                         img["format"],
-                        img["data"],
+                        img["path"],
+                        img["size_bytes"],
                     )
                     for i, img in enumerate(images)
                 ],
@@ -361,6 +406,17 @@ class PDFCache:
     def _invalidate_file(self, path: str) -> None:
         """Remove all cache entries for a file."""
         with sqlite3.connect(self.db_path) as conn:
+            # Delete image files from disk before removing DB rows
+            rows = conn.execute(
+                "SELECT file_path_on_disk FROM page_images WHERE file_path = ?",
+                (path,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    Path(row[0]).unlink()
+                except FileNotFoundError:
+                    pass
+
             conn.execute("DELETE FROM pdf_metadata WHERE file_path = ?", (path,))
             conn.execute("DELETE FROM page_text WHERE file_path = ?", (path,))
             conn.execute("DELETE FROM page_images WHERE file_path = ?", (path,))
@@ -384,6 +440,19 @@ class PDFCache:
 
             if expired_paths:
                 placeholders = ",".join("?" * len(expired_paths))
+
+                # Delete image files from disk
+                img_rows = conn.execute(
+                    f"SELECT file_path_on_disk FROM page_images"
+                    f" WHERE file_path IN ({placeholders})",
+                    expired_paths,
+                ).fetchall()
+                for row in img_rows:
+                    try:
+                        Path(row[0]).unlink()
+                    except FileNotFoundError:
+                        pass
+
                 conn.execute(
                     f"DELETE FROM pdf_metadata WHERE file_path IN ({placeholders})",
                     expired_paths,
@@ -401,6 +470,11 @@ class PDFCache:
 
     def clear_all(self) -> int:
         """Clear entire cache. Returns number of files cleared."""
+        # Delete all image files
+        shutil.rmtree(self.images_dir, ignore_errors=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(self.images_dir), 0o700)
+
         with sqlite3.connect(self.db_path) as conn:
             count = conn.execute("SELECT COUNT(*) FROM pdf_metadata").fetchone()[0]
             conn.execute("DELETE FROM pdf_metadata")
@@ -432,8 +506,14 @@ class PDFCache:
             row = conn.execute("SELECT SUM(text_length) FROM page_text").fetchone()
             stats["total_text_chars"] = row[0] or 0
 
-            # Database file size
-            stats["cache_size_bytes"] = os.path.getsize(self.db_path)
+            # Database file size + image directory size
+            try:
+                images_size = sum(
+                    f.stat().st_size for f in self.images_dir.glob("*.png")
+                )
+            except FileNotFoundError:
+                images_size = 0
+            stats["cache_size_bytes"] = os.path.getsize(self.db_path) + images_size
             stats["cache_size_mb"] = round(stats["cache_size_bytes"] / (1024 * 1024), 2)
 
             return stats

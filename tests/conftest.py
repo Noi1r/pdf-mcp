@@ -115,8 +115,8 @@ def sample_pdf_with_images():
 @pytest.fixture
 def mock_url_to_pdf(sample_pdf):
     """Mock URL fetcher to return sample_pdf for any URL."""
-    with patch.object(URLFetcher, 'is_url', return_value=True):
-        with patch.object(URLFetcher, 'fetch', return_value=sample_pdf):
+    with patch.object(URLFetcher, "is_url", return_value=True):
+        with patch.object(URLFetcher, "fetch", return_value=sample_pdf):
             yield sample_pdf
 
 
@@ -156,7 +156,9 @@ def sample_pdf_rgba():
         page = doc.new_page()
 
         # Create RGBA image with PIL
-        img = Image.new("RGBA", (50, 50), color=(255, 0, 0, 128))  # Semi-transparent red
+        img = Image.new(
+            "RGBA", (50, 50), color=(255, 0, 0, 128)
+        )  # Semi-transparent red
         img_bytes = io.BytesIO()
         img.save(img_bytes, format="PNG")
         img_bytes.seek(0)

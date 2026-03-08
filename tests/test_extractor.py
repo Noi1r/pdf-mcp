@@ -1,7 +1,7 @@
 # tests/test_extractor.py
 """Tests for pdf_mcp.extractor module - edge cases and uncovered functions."""
 
-import base64
+from pathlib import Path
 from unittest.mock import patch
 
 import pymupdf
@@ -194,10 +194,12 @@ class TestExtractTextWithCoordinates:
 class TestExtractImagesFromPage:
     """Tests for extract_images_from_page."""
 
-    def test_rgb_image_output_structure(self, sample_pdf_with_images):
-        """Extracted images have all required fields with correct types."""
+    def test_rgb_image_output_structure(self, sample_pdf_with_images, tmp_path):
+        """Extracted images are saved to disk with correct metadata."""
         doc = pymupdf.open(sample_pdf_with_images)
-        images = extract_images_from_page(doc, 0)
+        images = extract_images_from_page(
+            doc, 0, output_dir=tmp_path, pdf_hash="abc123"
+        )
         doc.close()
 
         assert len(images) >= 1
@@ -209,37 +211,65 @@ class TestExtractImagesFromPage:
         assert img["width"] > 0
         assert img["height"] > 0
         assert img["format"] in ("rgb", "rgba", "grayscale")
-        # Valid base64 PNG
-        decoded = base64.b64decode(img["data"])
-        assert decoded[:4] == b"\x89PNG"
+        # File path instead of base64 data
+        assert "path" in img
+        assert "data" not in img
+        path = Path(img["path"])
+        assert path.exists()
+        assert path.suffix == ".png"
+        # Valid PNG magic bytes
+        assert path.read_bytes()[:4] == b"\x89PNG"
+        # File size in bytes
+        assert "size_bytes" in img
+        assert isinstance(img["size_bytes"], int)
+        assert img["size_bytes"] > 0
+        assert img["size_bytes"] == path.stat().st_size
+        # Secure permissions
+        assert oct(path.stat().st_mode & 0o777) == oct(0o600)
 
-    def test_grayscale_format(self, sample_pdf_grayscale):
+    def test_deterministic_filenames(self, sample_pdf_with_images, tmp_path):
+        """Same inputs produce the same file path."""
+        doc = pymupdf.open(sample_pdf_with_images)
+        images1 = extract_images_from_page(
+            doc, 0, output_dir=tmp_path, pdf_hash="det123"
+        )
+        images2 = extract_images_from_page(
+            doc, 0, output_dir=tmp_path, pdf_hash="det123"
+        )
+        doc.close()
+
+        assert len(images1) >= 1
+        assert images1[0]["path"] == images2[0]["path"]
+        # Filename format: {pdf_hash}_p{page}_i{index}.png
+        assert "det123_p0_i0.png" in images1[0]["path"]
+
+    def test_grayscale_format(self, sample_pdf_grayscale, tmp_path):
         """Grayscale images report 'grayscale' format."""
         doc = pymupdf.open(sample_pdf_grayscale)
-        images = extract_images_from_page(doc, 0)
+        images = extract_images_from_page(doc, 0, output_dir=tmp_path, pdf_hash="gs")
         doc.close()
 
         assert len(images) >= 1
         assert images[0]["format"] == "grayscale"
 
-    def test_rgba_format(self, sample_pdf_rgba):
+    def test_rgba_format(self, sample_pdf_rgba, tmp_path):
         """RGBA images report 'rgba' format."""
         doc = pymupdf.open(sample_pdf_rgba)
-        images = extract_images_from_page(doc, 0)
+        images = extract_images_from_page(doc, 0, output_dir=tmp_path, pdf_hash="rgba")
         doc.close()
 
         assert len(images) >= 1
         assert images[0]["format"] in ("rgba", "rgb")
 
-    def test_no_images_returns_empty_list(self, sample_pdf):
+    def test_no_images_returns_empty_list(self, sample_pdf, tmp_path):
         """PDF with no images returns an empty list."""
         doc = pymupdf.open(sample_pdf)
-        images = extract_images_from_page(doc, 0)
+        images = extract_images_from_page(doc, 0, output_dir=tmp_path, pdf_hash="empty")
         doc.close()
 
         assert images == []
 
-    def test_cmyk_image_converted_to_rgb(self):
+    def test_cmyk_image_converted_to_rgb(self, tmp_path):
         """CMYK images are converted to RGB colorspace."""
         from PIL import Image
         import io
@@ -255,13 +285,17 @@ class TestExtractImagesFromPage:
 
             page.insert_image(pymupdf.Rect(50, 50, 100, 100), stream=img_bytes.read())
 
-            images = extract_images_from_page(doc, 0)
+            images = extract_images_from_page(
+                doc, 0, output_dir=tmp_path, pdf_hash="cmyk"
+            )
 
         assert len(images) >= 1
         # After CMYK→RGB conversion, pix.n should be 3 → "rgb"
         assert images[0]["format"] == "rgb"
 
-    def test_bad_xref_skipped_with_warning(self, sample_pdf_with_images, caplog):
+    def test_bad_xref_skipped_with_warning(
+        self, sample_pdf_with_images, tmp_path, caplog
+    ):
         """Images that raise exceptions are skipped and logged."""
         doc = pymupdf.open(sample_pdf_with_images)
 
@@ -269,14 +303,16 @@ class TestExtractImagesFromPage:
             import logging
 
             with caplog.at_level(logging.WARNING, logger="pdf_mcp.extractor"):
-                images = extract_images_from_page(doc, 0)
+                images = extract_images_from_page(
+                    doc, 0, output_dir=tmp_path, pdf_hash="bad"
+                )
 
         doc.close()
 
         assert images == []
         assert "Failed to extract image" in caplog.text
 
-    def test_multiple_images_indexed(self):
+    def test_multiple_images_indexed(self, tmp_path):
         """Multiple images on one page get sequential indices."""
         from PIL import Image
         import io
@@ -294,12 +330,46 @@ class TestExtractImagesFromPage:
                     pymupdf.Rect(x, 50, x + 30, 80), stream=img_bytes.read()
                 )
 
-            images = extract_images_from_page(doc, 0)
+            images = extract_images_from_page(
+                doc, 0, output_dir=tmp_path, pdf_hash="multi"
+            )
 
         assert len(images) == 3
         for i, img in enumerate(images):
             assert img["index"] == i
             assert img["page"] == 1
+
+    def test_save_to_nonexistent_dir_skipped_with_warning(
+        self, sample_pdf_with_images, tmp_path, caplog
+    ):
+        """FzErrorSystem from pix.save() to nonexistent dir is caught and skipped."""
+        doc = pymupdf.open(sample_pdf_with_images)
+        nonexistent = tmp_path / "no_such_dir" / "subdir"  # does not exist
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="pdf_mcp.extractor"):
+            images = extract_images_from_page(
+                doc, 0, output_dir=nonexistent, pdf_hash="fz"
+            )
+        doc.close()
+        assert images == []
+        assert "Failed to save image" in caplog.text
+
+    def test_chmod_oserror_skipped_with_warning(
+        self, sample_pdf_with_images, tmp_path, caplog
+    ):
+        """OSError during os.chmod() is caught and image is skipped."""
+        doc = pymupdf.open(sample_pdf_with_images)
+        import logging
+
+        with patch("os.chmod", side_effect=OSError("permission denied")):
+            with caplog.at_level(logging.WARNING, logger="pdf_mcp.extractor"):
+                images = extract_images_from_page(
+                    doc, 0, output_dir=tmp_path, pdf_hash="err"
+                )
+        doc.close()
+        assert images == []
+        assert "Failed to save image" in caplog.text
 
 
 class TestExtractTextFromPageOptions:

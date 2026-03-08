@@ -8,6 +8,7 @@ Usage:
     python -m pdf_mcp.server
 """
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,11 @@ def _resolve_path(source: str) -> str:
 def _clamp(value: int, minimum: int, maximum: int) -> int:
     """Clamp a value between minimum and maximum."""
     return max(minimum, min(value, maximum))
+
+
+def _pdf_hash(path: str) -> str:
+    """Generate a short hash from a file path for deterministic image filenames."""
+    return hashlib.sha256(path.encode()).hexdigest()[:16]
 
 
 # ============================================================================
@@ -201,7 +207,7 @@ def pdf_read_pages(
             - "1-10": Pages 1 through 10
             - "1,5,10": Pages 1, 5, and 10
             - "1-5,10,15-20": Combination of ranges and individual pages
-        include_images: If True, extract images as base64 (increases response size)
+        include_images: If True, extract images as file paths (increases response size)
 
     Returns:
         - pages: List of {page, text} objects
@@ -266,7 +272,12 @@ def pdf_read_pages(
                 if cached_images:
                     images.extend(cached_images)
                 else:
-                    page_images = extract_images_from_page(doc, page_num)
+                    page_images = extract_images_from_page(
+                        doc,
+                        page_num,
+                        output_dir=cache.images_dir,
+                        pdf_hash=_pdf_hash(local_path),
+                    )
                     if page_images:
                         cache.save_page_images(local_path, page_num, page_images)
                         images.extend(page_images)
@@ -557,7 +568,7 @@ def pdf_extract_images(
     max_images: int = 20,
 ) -> dict[str, Any]:
     """
-    Extract images from PDF pages as base64-encoded PNG.
+    Extract images from PDF pages as PNG files saved to disk.
 
     Args:
         path: Path to PDF file (absolute, relative, or URL)
@@ -565,7 +576,7 @@ def pdf_extract_images(
         max_images: Maximum number of images to extract (default 20, max 50)
 
     Returns:
-        - images: List of {page, index, width, height, format, data} objects
+        - images: List of {page, index, width, height, format, path, size_bytes} objects
         - image_count: Number of images extracted
         - truncated: Whether results were truncated due to max_images
     """
@@ -588,7 +599,12 @@ def pdf_extract_images(
             if cached_images:
                 all_images.extend(cached_images)
             else:
-                page_images = extract_images_from_page(doc, page_num)
+                page_images = extract_images_from_page(
+                    doc,
+                    page_num,
+                    output_dir=cache.images_dir,
+                    pdf_hash=_pdf_hash(local_path),
+                )
                 if page_images:
                     cache.save_page_images(local_path, page_num, page_images)
                     all_images.extend(page_images)

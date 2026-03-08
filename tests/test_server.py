@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-import base64
+from pathlib import Path
 from unittest.mock import patch, Mock
 
 import httpx
@@ -136,11 +136,15 @@ class TestPdfReadPages:
         assert result["total_chars"] == expected_chars
 
     def test_read_pages_with_images(self, sample_pdf_with_images, isolated_server):
-        """include_images=True works."""
+        """include_images=True returns images with file paths."""
         result = pdf_read_pages(sample_pdf_with_images, "1", include_images=True)
 
         assert "images" in result
         assert "image_count" in result
+        if result["image_count"] > 0:
+            img = result["images"][0]
+            assert "path" in img
+            assert "data" not in img
 
 
 class TestPdfReadAll:
@@ -233,7 +237,9 @@ class TestPdfSearch:
 
         if result_small["matches"] and result_large["matches"]:
             # Larger context should have longer excerpts (usually)
-            assert len(result_large["matches"][0]["excerpt"]) >= len(result_small["matches"][0]["excerpt"])
+            assert len(result_large["matches"][0]["excerpt"]) >= len(
+                result_small["matches"][0]["excerpt"]
+            )
 
 
 class TestPdfGetToc:
@@ -282,7 +288,7 @@ class TestPdfExtractImages:
     """Tests for pdf_extract_images tool."""
 
     def test_extract_images_basic(self, sample_pdf_with_images, isolated_server):
-        """Returns images with width, height, data."""
+        """Returns images with width, height, path."""
         result = pdf_extract_images(sample_pdf_with_images)
 
         assert "images" in result
@@ -292,7 +298,7 @@ class TestPdfExtractImages:
             img = result["images"][0]
             assert "width" in img
             assert "height" in img
-            assert "data" in img
+            assert "path" in img
             assert "format" in img
 
     def test_extract_images_no_images(self, sample_pdf, isolated_server):
@@ -302,7 +308,9 @@ class TestPdfExtractImages:
         assert result["image_count"] == 0
         assert result["images"] == []
 
-    def test_extract_images_specific_pages(self, sample_pdf_with_images, isolated_server):
+    def test_extract_images_specific_pages(
+        self, sample_pdf_with_images, isolated_server
+    ):
         """Pages filter works."""
         result = pdf_extract_images(sample_pdf_with_images, pages="1")
 
@@ -323,15 +331,70 @@ class TestPdfExtractImages:
 
         # Both should return same data
         assert result1["image_count"] == result2["image_count"]
+        if result2["image_count"] > 0:
+            img = result2["images"][0]
+            assert "path" in img
+            assert "data" not in img
+            assert Path(img["path"]).exists()
 
-    def test_extract_images_base64_valid(self, sample_pdf_with_images, isolated_server):
-        """Data is valid base64."""
+    def test_extract_images_returns_file_paths(
+        self, sample_pdf_with_images, isolated_server
+    ):
+        """Images are returned as file paths with size, not base64."""
         result = pdf_extract_images(sample_pdf_with_images)
 
         for img in result["images"]:
-            # Should not raise
-            decoded = base64.b64decode(img["data"])
-            assert len(decoded) > 0
+            assert "path" in img
+            assert "size_bytes" in img
+            assert "data" not in img
+            path = Path(img["path"])
+            assert path.exists()
+            assert path.read_bytes()[:4] == b"\x89PNG"
+            assert img["size_bytes"] == path.stat().st_size
+
+
+class TestExtractImagesCacheMiss:
+    """Tests for image cache miss when files deleted."""
+
+    def test_extract_images_cache_miss_when_file_deleted(
+        self, sample_pdf_with_images, isolated_server
+    ):
+        """If cached PNG is deleted from disk, re-extraction occurs."""
+        result1 = pdf_extract_images(sample_pdf_with_images)
+        assert result1["image_count"] > 0
+
+        # Delete the file
+        for img in result1["images"]:
+            Path(img["path"]).unlink()
+
+        # Should re-extract successfully
+        result2 = pdf_extract_images(sample_pdf_with_images)
+        assert result2["image_count"] == result1["image_count"]
+        for img in result2["images"]:
+            assert Path(img["path"]).exists()
+
+    def test_cache_clear_deletes_image_files(
+        self, sample_pdf_with_images, isolated_server
+    ):
+        """pdf_cache_clear(expired_only=False) removes image files from disk."""
+        result = pdf_extract_images(sample_pdf_with_images)
+        paths = [Path(img["path"]) for img in result["images"]]
+        assert all(p.exists() for p in paths)
+
+        pdf_cache_clear(expired_only=False)
+
+        assert all(not p.exists() for p in paths)
+
+    def test_cache_stats_includes_image_size(
+        self, sample_pdf_with_images, isolated_server
+    ):
+        """Cache stats include size of image files on disk."""
+        stats_before = pdf_cache_stats()
+
+        pdf_extract_images(sample_pdf_with_images)
+
+        stats_after = pdf_cache_stats()
+        assert stats_after["cache_size_bytes"] > stats_before["cache_size_bytes"]
 
 
 class TestPdfCacheStats:
@@ -365,8 +428,14 @@ class TestPdfCacheStats:
         """All expected keys present."""
         result = pdf_cache_stats()
 
-        expected_keys = ["total_files", "total_pages", "total_images",
-                        "cache_size_bytes", "cache_size_mb", "url_cache"]
+        expected_keys = [
+            "total_files",
+            "total_pages",
+            "total_images",
+            "cache_size_bytes",
+            "cache_size_mb",
+            "url_cache",
+        ]
         for key in expected_keys:
             assert key in result
 
@@ -457,11 +526,14 @@ class TestToolIntegration:
 class TestErrorCases:
     """Error handling tests."""
 
-    @pytest.mark.parametrize("tool_func", [
-        pdf_info,
-        pdf_read_all,
-        pdf_get_toc,
-    ])
+    @pytest.mark.parametrize(
+        "tool_func",
+        [
+            pdf_info,
+            pdf_read_all,
+            pdf_get_toc,
+        ],
+    )
     def test_file_not_found_parametrized(self, tool_func, isolated_server):
         """All path-based tools raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
@@ -653,21 +725,19 @@ class TestSearchWordBoundaryAndEllipsis:
 class TestReadPagesCachedImages:
     """Tests for cached image retrieval in pdf_read_pages."""
 
-    def test_images_served_from_cache(
-        self, sample_pdf_with_images, isolated_server
-    ):
-        """Second call with include_images returns cached images."""
+    def test_images_served_from_cache(self, sample_pdf_with_images, isolated_server):
+        """Second call with include_images returns cached images with file paths."""
         # First call populates cache
-        result1 = pdf_read_pages(
-            sample_pdf_with_images, "1", include_images=True
-        )
+        result1 = pdf_read_pages(sample_pdf_with_images, "1", include_images=True)
         images1 = result1.get("images", [])
 
         # Second call should hit cache
-        result2 = pdf_read_pages(
-            sample_pdf_with_images, "1", include_images=True
-        )
+        result2 = pdf_read_pages(sample_pdf_with_images, "1", include_images=True)
         images2 = result2.get("images", [])
 
         assert len(images1) > 0
         assert len(images2) == len(images1)
+        for img in images2:
+            assert "path" in img
+            assert "data" not in img
+            assert Path(img["path"]).exists()
