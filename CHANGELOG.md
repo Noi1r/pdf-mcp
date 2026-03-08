@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- PDF validation bypass: `.pdf` URL extension no longer skips magic-bytes (`%PDF`) verification when Content-Type is non-PDF
+
+### Tests
+- Add regression tests for `.pdf` URL returning HTML content (direct and via redirect)
+- Add positive tests for valid PDFs served with incorrect or missing Content-Type headers
+
 ### Changed
 - Migrate from `mcp` SDK (FastMCP v2) to standalone `fastmcp` v3 package (`fastmcp>=3.0.0`)
 - Switch code quality tooling from `ruff` to `flake8` + `black` (line-length 88)
