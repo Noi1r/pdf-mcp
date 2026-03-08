@@ -1,4 +1,4 @@
-# pdf-mcp 📄
+# pdf-mcp
 
 [![PyPI version](https://img.shields.io/pypi/v/pdf-mcp)](https://pypi.org/project/pdf-mcp/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -8,29 +8,26 @@
 [![codecov](https://codecov.io/gh/jztan/pdf-mcp/graph/badge.svg)](https://codecov.io/gh/jztan/pdf-mcp)
 [![Downloads](https://pepy.tech/badge/pdf-mcp)](https://pepy.tech/project/pdf-mcp)
 
-**Production-ready MCP server for PDF processing with intelligent caching.**
-
-A Python implementation of the Model Context Protocol (MCP) server that enables AI agents like Claude to read, search, and extract content from PDF files efficiently.
+A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that enables AI agents to read, search, and extract content from PDF files. Built with Python and PyMuPDF, with SQLite-based caching for persistence across server restarts.
 
 **mcp-name: io.github.jztan/pdf-mcp**
 
-## ✨ Features
+## Features
 
-- 🚀 **8 Specialized Tools** - Purpose-built tools for different PDF operations
-- 💾 **SQLite Caching** - Persistent cache survives server restarts (essential for STDIO transport)
-- 📄 **Smart Pagination** - Read large PDFs in manageable chunks
-- 🔍 **Full-Text Search** - Find content without loading entire document
-- 🖼️ **Image Extraction** - Extract images as base64 PNG
-- 🌐 **URL Support** - Read PDFs from HTTP/HTTPS URLs
-- ⚡ **Fast Subsequent Access** - Cached pages load instantly
+- **8 specialized tools** for different PDF operations
+- **SQLite caching** — persistent cache survives server restarts (essential for STDIO transport)
+- **Paginated reading** — read large PDFs in manageable chunks
+- **Full-text search** — find content without loading the entire document
+- **Image extraction** — extract images as base64 PNG
+- **URL support** — read PDFs from HTTP/HTTPS URLs
 
-## 📦 Installation
+## Installation
 
 ```bash
 pip install pdf-mcp
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 <details open>
 <summary><strong>Claude Code</strong></summary>
@@ -68,27 +65,27 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-**Location of config file:**
+Config file location:
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-After updating the config, restart Claude Desktop to load the MCP server.
+Restart Claude Desktop after updating the config.
 
 </details>
 
 <details>
-<summary><strong>Visual Studio Code (Native MCP Support)</strong></summary>
+<summary><strong>Visual Studio Code</strong></summary>
 
-VS Code has built-in MCP support via GitHub Copilot (requires VS Code 1.102+).
+Requires VS Code 1.102+ with GitHub Copilot.
 
-**Using CLI (Quickest):**
+**CLI:**
 ```bash
 code --add-mcp '{"name":"pdf-mcp","command":"pdf-mcp"}'
 ```
 
-**Using Command Palette:**
+**Command Palette:**
 1. Open Command Palette (`Cmd/Ctrl+Shift+P`)
-2. Run `MCP: Open User Configuration` (for global) or `MCP: Open Workspace Folder Configuration` (for project-specific)
+2. Run `MCP: Open User Configuration` (global) or `MCP: Open Workspace Folder Configuration` (project-specific)
 3. Add the configuration:
    ```json
    {
@@ -99,10 +96,9 @@ code --add-mcp '{"name":"pdf-mcp","command":"pdf-mcp"}'
      }
    }
    ```
-4. Save the file. VS Code will automatically load the MCP server.
+4. Save. VS Code will automatically load the server.
 
-**Manual Configuration:**
-Create `.vscode/mcp.json` in your workspace:
+**Manual:** Create `.vscode/mcp.json` in your workspace:
 ```json
 {
   "servers": {
@@ -117,8 +113,6 @@ Create `.vscode/mcp.json` in your workspace:
 
 <details>
 <summary><strong>Codex CLI</strong></summary>
-
-Add to Codex CLI using the command:
 
 ```bash
 codex mcp add pdf-mcp -- pdf-mcp
@@ -150,12 +144,12 @@ Create or edit `.kiro/settings/mcp.json` in your workspace:
 }
 ```
 
-Save the file and restart Kiro. The PDF tools will appear in the MCP panel.
+Save and restart Kiro.
 
 </details>
 
 <details>
-<summary><strong>Generic MCP Clients</strong></summary>
+<summary><strong>Other MCP Clients</strong></summary>
 
 Most MCP clients use a standard configuration format:
 
@@ -169,7 +163,7 @@ Most MCP clients use a standard configuration format:
 }
 ```
 
-If using `uvx` (recommended for isolated environments):
+With `uvx` (for isolated environments):
 
 ```json
 {
@@ -184,43 +178,40 @@ If using `uvx` (recommended for isolated environments):
 
 </details>
 
-### Testing Your Setup
+### Verify Installation
 
 ```bash
-# Verify pdf-mcp is installed and working
 pdf-mcp --help
 ```
 
-## 🛠️ Tools
+## Tools
 
-### 1. `pdf_info` - Get Document Information
+### `pdf_info` — Get Document Information
 
-**Always call this first** to understand the document before reading.
+Returns page count, metadata, table of contents, file size, and estimated token count. **Call this first** to understand a document before reading it.
 
 ```
 "Read the PDF at /path/to/document.pdf"
 ```
 
-Returns: page count, metadata, table of contents, file size, estimated tokens.
+### `pdf_read_pages` — Read Specific Pages
 
-### 2. `pdf_read_pages` - Read Specific Pages
-
-Read pages in chunks to manage context size.
+Read selected pages to manage context size.
 
 ```
 "Read pages 1-10 of the PDF"
 "Read pages 15, 20, and 25-30"
 ```
 
-### 3. `pdf_read_all` - Read Entire Document
+### `pdf_read_all` — Read Entire Document
 
-For small documents only (has safety limit).
+Read a complete document in one call. Subject to a safety limit on page count.
 
 ```
 "Read the entire PDF (it's only 10 pages)"
 ```
 
-### 4. `pdf_search` - Search Within PDF
+### `pdf_search` — Search Within PDF
 
 Find relevant pages before loading content.
 
@@ -228,74 +219,74 @@ Find relevant pages before loading content.
 "Search for 'quarterly revenue' in the PDF"
 ```
 
-### 5. `pdf_get_toc` - Get Table of Contents
+### `pdf_get_toc` — Get Table of Contents
 
 ```
 "Show me the table of contents"
 ```
 
-### 6. `pdf_extract_images` - Extract Images
+### `pdf_extract_images` — Extract Images
 
 ```
 "Extract images from pages 1-5"
 ```
 
-### 7. `pdf_cache_stats` - View Cache Statistics
+### `pdf_cache_stats` — View Cache Statistics
 
 ```
 "Show PDF cache statistics"
 ```
 
-### 8. `pdf_cache_clear` - Clear Cache
+### `pdf_cache_clear` — Clear Cache
 
 ```
 "Clear expired PDF cache entries"
 ```
 
-## 📋 Example Workflow
+## Example Workflow
 
-For a large document (e.g., 200-page annual report):
+For a large document (e.g., a 200-page annual report):
 
 ```
 User: "Summarize the risk factors in this annual report"
 
-Claude's workflow:
-1. pdf_info("report.pdf") 
-   → Learns: 200 pages, TOC shows "Risk Factors" on page 89
+Agent workflow:
+1. pdf_info("report.pdf")
+   → 200 pages, TOC shows "Risk Factors" on page 89
 
 2. pdf_search("report.pdf", "risk factors")
-   → Finds relevant pages: 89-110
+   → Relevant pages: 89-110
 
 3. pdf_read_pages("report.pdf", "89-100")
-   → Reads first batch
+   → First batch
 
 4. pdf_read_pages("report.pdf", "101-110")
-   → Reads second batch
+   → Second batch
 
-5. Synthesizes answer from chunks
+5. Synthesize answer from chunks
 ```
 
-## 💾 Caching
+## Caching
 
-The server uses **SQLite for persistent caching** because MCP with STDIO transport spawns a new process for each conversation.
+The server uses SQLite for persistent caching. This is necessary because MCP servers using STDIO transport are spawned as a new process for each conversation.
 
-### Cache Location
-- `~/.cache/pdf-mcp/cache.db`
+**Cache location:** `~/.cache/pdf-mcp/cache.db`
 
-### What's Cached
+**What's cached:**
+
 | Data | Benefit |
 |------|---------|
-| Metadata | Instant document info |
+| Metadata | Avoid re-parsing document info |
 | Page text | Skip re-extraction |
 | Images | Skip re-encoding |
-| TOC | Fast navigation |
+| TOC | Skip re-parsing |
 
-### Cache Invalidation
+**Cache invalidation:**
 - Automatic when file modification time changes
-- Manual via `pdf_cache_clear` tool
+- Manual via the `pdf_cache_clear` tool
 - TTL: 24 hours (configurable)
 
-## ⚙️ Configuration
+## Configuration
 
 Environment variables:
 
@@ -307,10 +298,9 @@ PDF_MCP_CACHE_DIR=/path/to/cache
 PDF_MCP_CACHE_TTL=48
 ```
 
-## 🔧 Development
+## Development
 
 ```bash
-# Clone
 git clone https://github.com/jztan/pdf-mcp.git
 cd pdf-mcp
 
@@ -330,27 +320,27 @@ flake8 src/
 black src/
 ```
 
-## 📊 Comparison
+## Why pdf-mcp?
 
-| Feature | Traditional Approach | pdf-mcp |
-|---------|---------------------|---------|
+| | Without pdf-mcp | With pdf-mcp |
+|---|---|---|
 | Large PDFs | Context overflow | Chunked reading |
 | Repeated access | Re-parse every time | SQLite cache |
-| Find content | Load everything | Search first |
-| Multiple tools | One monolithic tool | 8 specialized tools |
+| Finding content | Load everything | Search first |
+| Tool design | Single monolithic tool | 8 specialized tools |
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please submit a pull request.
 
-## 📄 License
+## License
 
-MIT License - see [LICENSE](LICENSE) file.
+MIT — see [LICENSE](LICENSE).
 
-## 🔗 Links
+## Links
 
-- [PyPI Package](https://pypi.org/project/pdf-mcp/)
+- [PyPI](https://pypi.org/project/pdf-mcp/)
+- [GitHub](https://github.com/jztan/pdf-mcp)
 - [MCP Documentation](https://modelcontextprotocol.io/)
-- [GitHub Repository](https://github.com/jztan/pdf-mcp)
-- [Blog Post: How I Built pdf-mcp](https://blog.jztan.com/how-i-built-pdf-mcp-solving-claude-large-pdf-limitations/)
-
+- [How I Built pdf-mcp](https://blog.jztan.com/how-i-built-pdf-mcp-solving-claude-large-pdf-limitations/) — The story behind this project
+- [MCP Server Security: 8 Vulnerabilities](https://blog.jztan.com/mcp-server-security-8-vulnerabilities/) — Security lessons from building MCP servers
