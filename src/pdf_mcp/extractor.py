@@ -2,9 +2,10 @@
 PDF extraction utilities using PyMuPDF.
 """
 
-import base64
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 import pymupdf
@@ -152,17 +153,22 @@ def extract_text_with_coordinates(page: Any) -> list[dict[str, Any]]:
 
 
 def extract_images_from_page(
-    doc: pymupdf.Document, page_num: int
+    doc: pymupdf.Document,
+    page_num: int,
+    output_dir: Path | None = None,
+    pdf_hash: str = "",
 ) -> list[dict[str, Any]]:
     """
-    Extract images from a PDF page as base64-encoded PNG.
+    Extract images from a PDF page as PNG files saved to disk.
 
     Args:
         doc: PyMuPDF document object
         page_num: Page number (0-indexed)
+        output_dir: Directory to save PNG files
+        pdf_hash: Hash prefix for deterministic filenames
 
     Returns:
-        List of image dicts with width, height, format, data (base64)
+        List of image dicts with width, height, format, path, size_bytes
     """
     page = doc[page_num]
     images = []
@@ -190,8 +196,24 @@ def extract_images_from_page(
             else:
                 color_format = "unknown"
 
-            # Convert to PNG bytes
-            png_bytes = pix.tobytes("png")
+            # Save to disk
+            file_name = f"{pdf_hash}_p{page_num}_i{img_index}.png"
+            file_path = output_dir / file_name
+            try:
+                pix.save(str(file_path))
+                os.chmod(str(file_path), 0o600)
+            except Exception as e:
+                try:
+                    file_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                logger.warning(
+                    "Failed to save image %d from page %d: %s",
+                    img_index,
+                    page_num,
+                    e,
+                )
+                continue
 
             images.append(
                 {
@@ -200,7 +222,8 @@ def extract_images_from_page(
                     "width": pix.width,
                     "height": pix.height,
                     "format": color_format,
-                    "data": base64.b64encode(png_bytes).decode("ascii"),
+                    "path": str(file_path),
+                    "size_bytes": file_path.stat().st_size,
                 }
             )
 

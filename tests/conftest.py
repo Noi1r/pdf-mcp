@@ -101,7 +101,8 @@ def sample_pdf_with_images():
         # Insert actual image (create minimal PNG)
         # 1x1 red PNG
         png_data = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
         )
         page.insert_image(pymupdf.Rect(50, 50, 80, 80), stream=png_data)
 
@@ -115,8 +116,8 @@ def sample_pdf_with_images():
 @pytest.fixture
 def mock_url_to_pdf(sample_pdf):
     """Mock URL fetcher to return sample_pdf for any URL."""
-    with patch.object(URLFetcher, 'is_url', return_value=True):
-        with patch.object(URLFetcher, 'fetch', return_value=sample_pdf):
+    with patch.object(URLFetcher, "is_url", return_value=True):
+        with patch.object(URLFetcher, "fetch", return_value=sample_pdf):
             yield sample_pdf
 
 
@@ -156,7 +157,9 @@ def sample_pdf_rgba():
         page = doc.new_page()
 
         # Create RGBA image with PIL
-        img = Image.new("RGBA", (50, 50), color=(255, 0, 0, 128))  # Semi-transparent red
+        img = Image.new(
+            "RGBA", (50, 50), color=(255, 0, 0, 128)
+        )  # Semi-transparent red
         img_bytes = io.BytesIO()
         img.save(img_bytes, format="PNG")
         img_bytes.seek(0)

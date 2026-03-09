@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- `pdf_read_pages` now saves images as PNG files to `~/.cache/pdf-mcp/images/` and returns file paths instead of inline base64 data
+- Image cache entries store file paths in SQLite instead of base64 blobs, significantly reducing database size
+- Cache `get_stats()` reports combined SQLite + image directory size
+- `pdf_read_pages` now always includes per-page `images` and `image_count` fields in each page dict
+- New `total_images` field in `pdf_read_pages` response
+- `pdf_read_all` docstring updated to direct users to `pdf_read_pages` for images
+
+### Removed
+- **BREAKING**: `pdf_extract_images` tool removed — use `pdf_read_pages` (images are now always included per-page)
+- **BREAKING**: `include_images` parameter removed from `pdf_read_pages` — images are always returned
+
+### Fixed
+- Image files are now properly cleaned up on cache clear, expiration, and invalidation
+- Expired cache entries are automatically pruned on server startup
+
+### Tests
+- Increase test coverage from 96% to 99% (184 tests)
+- Add sentinel caching edge-case tests (DB migration, FileNotFoundError handling)
+- Add extractor tests for RGBA format, unknown format, and save failure paths
+- Add url_fetcher tests for cache hit, clear, SSRF, streaming size limit, and redirect edge cases
+- Add server tests for `MAX_PAGES_LIMIT` truncation and `pdf_read_all` cache hit
+- Add `parse_page_range` trailing comma test
+
 ## [1.3.0] - 2026-03-08
 ### Fixed
 - PDF validation bypass: `.pdf` URL extension no longer skips magic-bytes (`%PDF`) verification when Content-Type is non-PDF
