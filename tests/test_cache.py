@@ -396,3 +396,79 @@ class TestCacheInvalidation:
         # Metadata should be cleared (though page_text cleanup is separate)
         stats = cache.get_stats()
         assert stats["total_files"] == 0
+
+
+class TestCacheSentinel:
+    """Tests for sentinel caching of imageless pages."""
+
+    def test_save_page_images_empty_inserts_sentinel(self, cache, sample_pdf):
+        """Saving empty image list inserts a sentinel row (image_index=-1)."""
+        cache.save_page_images(sample_pdf, 0, [])
+
+        import sqlite3
+
+        with sqlite3.connect(cache.db_path) as conn:
+            rows = conn.execute(
+                "SELECT image_index FROM page_images"
+                " WHERE file_path = ? AND page_num = ?",
+                (sample_pdf, 0),
+            ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == -1  # sentinel
+
+    def test_get_page_images_returns_empty_for_sentinel(self, cache, sample_pdf):
+        """get_page_images returns [] (not None) when sentinel exists."""
+        cache.save_page_images(sample_pdf, 0, [])
+        result = cache.get_page_images(sample_pdf, 0)
+        assert result == []  # Currently returns None — this will fail
+
+    def test_get_page_images_returns_none_for_unchecked(self, cache, sample_pdf):
+        """get_page_images returns None when page has never been checked."""
+        result = cache.get_page_images(sample_pdf, 0)
+        assert result is None
+
+    def test_get_stats_excludes_sentinel_rows(self, cache, sample_pdf):
+        """get_stats counts only real images, not sentinel rows."""
+        cache.save_page_images(sample_pdf, 0, [])  # sentinel only
+        stats = cache.get_stats()
+        assert stats["total_images"] == 0
+
+    def test_save_page_images_empty_replaces_existing_rows(
+        self, cache, sample_pdf, tmp_path
+    ):
+        """Saving empty list after real images deletes old rows and inserts sentinel."""
+        img_file = tmp_path / "test.png"
+        img_file.write_bytes(b"\x89PNG fake")
+
+        cache.save_page_images(
+            sample_pdf,
+            0,
+            [
+                {
+                    "index": 0,
+                    "width": 100,
+                    "height": 100,
+                    "format": "rgb",
+                    "path": str(img_file),
+                    "size_bytes": 9,
+                },
+            ],
+        )
+
+        # Now save empty → should replace with sentinel
+        cache.save_page_images(sample_pdf, 0, [])
+
+        import sqlite3
+
+        with sqlite3.connect(cache.db_path) as conn:
+            rows = conn.execute(
+                "SELECT image_index FROM page_images"
+                " WHERE file_path = ? AND page_num = ?",
+                (sample_pdf, 0),
+            ).fetchall()
+        # Only sentinel remains, old row deleted
+        assert len(rows) == 1
+        assert rows[0][0] == -1
+
+        # Old PNG cleaned up from disk
+        assert not img_file.exists()

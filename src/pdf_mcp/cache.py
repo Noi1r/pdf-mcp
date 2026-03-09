@@ -323,10 +323,11 @@ class PDFCache:
             if not all(self._is_cache_valid(path, row["file_mtime"]) for row in rows):
                 return None
 
-            # Verify all files exist on disk
-            for row in rows:
+            real_rows = [row for row in rows if row["image_index"] >= 0]
+
+            for row in real_rows:
                 if not Path(row["file_path_on_disk"]).exists():
-                    return None
+                    return None  # triggers re-extraction
 
             return [
                 {
@@ -338,7 +339,7 @@ class PDFCache:
                     "path": row["file_path_on_disk"],
                     "size_bytes": row["size_bytes"],
                 }
-                for row in rows
+                for row in real_rows
             ]
 
     def save_page_images(
@@ -355,6 +356,32 @@ class PDFCache:
         mtime, _ = self._get_file_info(path)
 
         with sqlite3.connect(self.db_path) as conn:
+            if not images:
+                old_rows = conn.execute(
+                    "SELECT file_path_on_disk FROM page_images"
+                    " WHERE file_path = ? AND page_num = ?",
+                    (path, page_num),
+                ).fetchall()
+                for row in old_rows:
+                    if row[0] != "__sentinel__":
+                        try:
+                            Path(row[0]).unlink()
+                        except FileNotFoundError:
+                            pass
+                conn.execute(
+                    "DELETE FROM page_images" " WHERE file_path = ? AND page_num = ?",
+                    (path, page_num),
+                )
+                conn.execute(
+                    "INSERT INTO page_images (file_path, page_num,"
+                    " image_index, file_mtime, width, height, format,"
+                    " file_path_on_disk, size_bytes)"
+                    " VALUES (?, ?, -1, ?, 0, 0, 'sentinel',"
+                    " '__sentinel__', 0)",
+                    (path, page_num, mtime),
+                )
+                return
+
             # Query existing file paths for orphan cleanup
             old_rows = conn.execute(
                 "SELECT file_path_on_disk FROM page_images"
@@ -367,10 +394,11 @@ class PDFCache:
 
             # Delete orphan files from disk
             for orphan_path in orphans:
-                try:
-                    Path(orphan_path).unlink()
-                except FileNotFoundError:
-                    pass
+                if orphan_path != "__sentinel__":
+                    try:
+                        Path(orphan_path).unlink()
+                    except FileNotFoundError:
+                        pass
 
             # Clear existing DB rows for this page
             conn.execute(
@@ -412,10 +440,11 @@ class PDFCache:
                 (path,),
             ).fetchall()
             for row in rows:
-                try:
-                    Path(row[0]).unlink()
-                except FileNotFoundError:
-                    pass
+                if row[0] != "__sentinel__":
+                    try:
+                        Path(row[0]).unlink()
+                    except FileNotFoundError:
+                        pass
 
             conn.execute("DELETE FROM pdf_metadata WHERE file_path = ?", (path,))
             conn.execute("DELETE FROM page_text WHERE file_path = ?", (path,))
@@ -448,10 +477,11 @@ class PDFCache:
                     expired_paths,
                 ).fetchall()
                 for row in img_rows:
-                    try:
-                        Path(row[0]).unlink()
-                    except FileNotFoundError:
-                        pass
+                    if row[0] != "__sentinel__":
+                        try:
+                            Path(row[0]).unlink()
+                        except FileNotFoundError:
+                            pass
 
                 conn.execute(
                     f"DELETE FROM pdf_metadata WHERE file_path IN ({placeholders})",
@@ -497,9 +527,9 @@ class PDFCache:
                 "SELECT COUNT(*) FROM page_text"
             ).fetchone()[0]
 
-            # Count images
+            # Count images (exclude sentinel rows)
             stats["total_images"] = conn.execute(
-                "SELECT COUNT(*) FROM page_images"
+                "SELECT COUNT(*) FROM page_images WHERE image_index >= 0"
             ).fetchone()[0]
 
             # Total text size

@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- `pdf_extract_images` and `pdf_read_pages` now save images as PNG files to `~/.cache/pdf-mcp/images/` and return file paths instead of inline base64 data
+- `pdf_read_pages` now saves images as PNG files to `~/.cache/pdf-mcp/images/` and returns file paths instead of inline base64 data
 - Image cache entries store file paths in SQLite instead of base64 blobs, significantly reducing database size
 - Cache `get_stats()` reports combined SQLite + image directory size
+- `pdf_read_pages` now always includes per-page `images` and `image_count` fields in each page dict
+- New `total_images` field in `pdf_read_pages` response
+- `pdf_read_all` docstring updated to direct users to `pdf_read_pages` for images
+
+### Removed
+- **BREAKING**: `pdf_extract_images` tool removed — use `pdf_read_pages` (images are now always included per-page)
+- **BREAKING**: `include_images` parameter removed from `pdf_read_pages` — images are always returned
 
 ### Fixed
 - Image files are now properly cleaned up on cache clear, expiration, and invalidation
