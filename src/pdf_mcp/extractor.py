@@ -2,9 +2,10 @@
 PDF extraction utilities using PyMuPDF.
 """
 
-import base64
 import logging
+import os
 import re
+import tempfile
 from typing import Any
 
 import pymupdf
@@ -152,35 +153,41 @@ def extract_text_with_coordinates(page: Any) -> list[dict[str, Any]]:
 
 
 def extract_images_from_page(
-    doc: pymupdf.Document, page_num: int
+    doc: pymupdf.Document, page_num: int, output_dir: str | None = None
 ) -> list[dict[str, Any]]:
     """
-    Extract images from a PDF page as base64-encoded PNG.
+    Extract images from a PDF page, saving them as PNG files.
+
+    Always writes images to disk and returns file paths. This avoids
+    returning massive base64 blobs that waste LLM context tokens.
 
     Args:
         doc: PyMuPDF document object
         page_num: Page number (0-indexed)
+        output_dir: Directory to save extracted images.
+                    If None, a temporary directory is used automatically.
 
     Returns:
-        List of image dicts with width, height, format, data (base64)
+        List of image dicts with page, index, width, height, format,
+        and file_path.
     """
+    if output_dir is None:
+        output_dir = tempfile.mkdtemp(prefix="pdf-mcp-images-")
+    os.makedirs(output_dir, exist_ok=True)
+
     page = doc[page_num]
     images = []
-
     image_list = page.get_images(full=True)
 
     for img_index, img_info in enumerate(image_list):
         xref = img_info[0]
 
         try:
-            # Extract image as Pixmap
             pix = pymupdf.Pixmap(doc, xref)
 
-            # Handle CMYK images
             if pix.n - pix.alpha > 3:
                 pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
 
-            # Determine color format
             if pix.n == 1:
                 color_format = "grayscale"
             elif pix.n == 3:
@@ -190,22 +197,21 @@ def extract_images_from_page(
             else:
                 color_format = "unknown"
 
-            # Convert to PNG bytes
-            png_bytes = pix.tobytes("png")
-
-            images.append(
-                {
-                    "page": page_num + 1,  # 1-indexed for output
-                    "index": img_index,
-                    "width": pix.width,
-                    "height": pix.height,
-                    "format": color_format,
-                    "data": base64.b64encode(png_bytes).decode("ascii"),
-                }
+            file_path = os.path.join(
+                output_dir, f"page{page_num + 1}_img{img_index}.png"
             )
+            pix.save(file_path)
+
+            images.append({
+                "page": page_num + 1,
+                "index": img_index,
+                "width": pix.width,
+                "height": pix.height,
+                "format": color_format,
+                "file_path": os.path.abspath(file_path),
+            })
 
         except (ValueError, RuntimeError, KeyError) as e:
-            # Skip problematic images but log the issue
             logger.warning(
                 "Failed to extract image %d from page %d: %s", img_index, page_num, e
             )

@@ -63,7 +63,7 @@ class PDFCache:
                     PRIMARY KEY (file_path, page_num)
                 );
 
-                -- Page images cache (stores base64)
+                -- Page images cache (stores file paths, not image data)
                 CREATE TABLE IF NOT EXISTS page_images (
                     file_path TEXT NOT NULL,
                     page_num INTEGER NOT NULL,
@@ -72,7 +72,7 @@ class PDFCache:
                     width INTEGER NOT NULL,
                     height INTEGER NOT NULL,
                     format TEXT NOT NULL,
-                    data TEXT NOT NULL,
+                    image_path TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (file_path, page_num, image_index)
                 );
@@ -276,20 +276,16 @@ class PDFCache:
 
     def get_page_images(self, path: str, page_num: int) -> list[dict[str, Any]] | None:
         """
-        Get cached images for a specific page.
+        Get cached image metadata for a specific page.
 
-        Args:
-            path: Path to PDF file
-            page_num: Page number (0-indexed)
-
-        Returns:
-            List of image dicts or None if not cached/invalid
+        Returns file paths (not image data) so the caller can use
+        previously extracted images without re-extracting.
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT image_index, width, height,
-                   format, data, file_mtime
+                   format, image_path, file_mtime
                    FROM page_images
                    WHERE file_path = ? AND page_num = ?
                    ORDER BY image_index""",
@@ -299,47 +295,41 @@ class PDFCache:
             if not rows:
                 return None
 
-            # Check if any row is invalid
             if not all(self._is_cache_valid(path, row["file_mtime"]) for row in rows):
                 return None
 
-            return [
-                {
+            # Verify cached image files still exist on disk
+            result = []
+            for row in rows:
+                if not os.path.exists(row["image_path"]):
+                    return None
+                result.append({
                     "page": page_num + 1,
                     "index": row["image_index"],
                     "width": row["width"],
                     "height": row["height"],
                     "format": row["format"],
-                    "data": row["data"],
-                }
-                for row in rows
-            ]
+                    "file_path": row["image_path"],
+                })
+            return result
 
     def save_page_images(
         self, path: str, page_num: int, images: list[dict[str, Any]]
     ) -> None:
         """
-        Save page images to cache.
-
-        Args:
-            path: Path to PDF file
-            page_num: Page number (0-indexed)
-            images: List of image dicts with width, height, format, data
+        Cache image metadata (file paths, dimensions) for a page.
         """
         mtime, _ = self._get_file_info(path)
 
         with sqlite3.connect(self.db_path) as conn:
-            # Clear existing images for this page
             conn.execute(
                 "DELETE FROM page_images WHERE file_path = ? AND page_num = ?",
                 (path, page_num),
             )
-
-            # Insert new images
             conn.executemany(
                 """INSERT INTO page_images
                    (file_path, page_num, image_index,
-                    file_mtime, width, height, format, data)
+                    file_mtime, width, height, format, image_path)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
@@ -350,7 +340,7 @@ class PDFCache:
                         img["width"],
                         img["height"],
                         img["format"],
-                        img["data"],
+                        img["file_path"],
                     )
                     for i, img in enumerate(images)
                 ],
@@ -423,7 +413,7 @@ class PDFCache:
                 "SELECT COUNT(*) FROM page_text"
             ).fetchone()[0]
 
-            # Count images
+            # Count cached image entries
             stats["total_images"] = conn.execute(
                 "SELECT COUNT(*) FROM page_images"
             ).fetchone()[0]

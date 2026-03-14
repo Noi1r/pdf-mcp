@@ -185,6 +185,7 @@ def pdf_read_pages(
     path: str,
     pages: str,
     include_images: bool = False,
+    output_dir: str | None = None,
 ) -> dict[str, Any]:
     """
     Read text content from specific pages of a PDF.
@@ -201,7 +202,11 @@ def pdf_read_pages(
             - "1-10": Pages 1 through 10
             - "1,5,10": Pages 1, 5, and 10
             - "1-5,10,15-20": Combination of ranges and individual pages
-        include_images: If True, extract images as base64 (increases response size)
+        include_images: If True, extract images from pages
+        output_dir: Directory to save extracted images (used when
+                    include_images=True). When set, images are saved to disk
+                    and file paths are returned instead of base64 data.
+                    Highly recommended to avoid token bloat.
 
     Returns:
         - pages: List of {page, text} objects
@@ -262,13 +267,17 @@ def pdf_read_pages(
 
             # Extract images if requested
             if include_images:
-                cached_images = cache.get_page_images(local_path, page_num)
-                if cached_images:
-                    images.extend(cached_images)
+                cached_imgs = cache.get_page_images(local_path, page_num)
+                if cached_imgs:
+                    images.extend(cached_imgs)
                 else:
-                    page_images = extract_images_from_page(doc, page_num)
+                    page_images = extract_images_from_page(
+                        doc, page_num, output_dir=output_dir
+                    )
                     if page_images:
-                        cache.save_page_images(local_path, page_num, page_images)
+                        cache.save_page_images(
+                            local_path, page_num, page_images
+                        )
                         images.extend(page_images)
 
         response: dict[str, Any] = {
@@ -555,23 +564,30 @@ def pdf_extract_images(
     path: str,
     pages: str | None = None,
     max_images: int = 20,
+    output_dir: str | None = None,
 ) -> dict[str, Any]:
     """
-    Extract images from PDF pages as base64-encoded PNG.
+    Extract images from PDF pages as PNG files.
+
+    Images are always saved to disk and file paths are returned.
+    This avoids returning large base64 blobs that consume massive
+    amounts of tokens in LLM contexts.
 
     Args:
         path: Path to PDF file (absolute, relative, or URL)
         pages: Page specification (default: all pages). Same format as pdf_read_pages.
         max_images: Maximum number of images to extract (default 20, max 50)
+        output_dir: Directory to save extracted images. When set, returns
+                    file_path instead of base64 data. Highly recommended to
+                    avoid token bloat.
 
     Returns:
-        - images: List of {page, index, width, height, format, data} objects
+        - images: List of {page, index, width, height, format, file_path} objects
         - image_count: Number of images extracted
         - truncated: Whether results were truncated due to max_images
     """
     local_path = _resolve_path(path)
 
-    # Clamp max_images to prevent resource exhaustion
     max_images = _clamp(max_images, 1, MAX_IMAGES_LIMIT)
 
     doc = pymupdf.open(local_path)
@@ -582,13 +598,13 @@ def pdf_extract_images(
         all_images: list[dict[str, Any]] = []
 
         for page_num in page_nums:
-            # Check cache
-            cached_images = cache.get_page_images(local_path, page_num)
-
-            if cached_images:
-                all_images.extend(cached_images)
+            cached = cache.get_page_images(local_path, page_num)
+            if cached:
+                all_images.extend(cached)
             else:
-                page_images = extract_images_from_page(doc, page_num)
+                page_images = extract_images_from_page(
+                    doc, page_num, output_dir=output_dir
+                )
                 if page_images:
                     cache.save_page_images(local_path, page_num, page_images)
                     all_images.extend(page_images)
